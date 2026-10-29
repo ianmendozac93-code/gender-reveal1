@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Panel de votos · privado</title>
+<style>
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:#F8F1E5;color:#2B2233;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;padding:24px 16px 48px}
+.wrap{max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+h1{margin:0;font-size:24px}
+.card{background:#FFFDF9;border-radius:16px;padding:18px;box-shadow:0 10px 30px rgba(43,34,51,.1)}
+label{font-weight:700;font-size:14px}
+input{width:100%;min-height:48px;margin-top:6px;border-radius:12px;border:1.5px solid #D9CDBF;padding:0 12px;font-size:16px}
+button{appearance:none;cursor:pointer;min-height:44px;padding:0 16px;border-radius:12px;border:none;font-weight:700;font-size:15px}
+.primary{background:#F2C879;color:#2B2233}
+.ghost{background:transparent;border:1.5px solid #D9CDBF;color:#4D4256}
+.del{background:#FBE3E1;color:#A3352E;min-height:36px;padding:0 12px;font-size:13px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;text-align:center}
+.stats b{display:block;font-size:28px}
+.nina{color:#B03E6B}.nino{color:#2C5A92}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th,td{text-align:left;padding:10px 6px;border-bottom:1px solid #EADFCF}
+th{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#6B6072}
+.muted{color:#6B6072;font-size:13px}
+#err{color:#A3352E;font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Panel de votos</h1>
+<p class="muted" style="margin:0">Solo para Ian y Vane. Necesitas la clave que configuraste en Netlify (ADMIN_KEY).</p>
+
+<div class="card" id="login">
+<label for="key">Clave</label>
+<input id="key" type="password" autocomplete="current-password">
+<div class="row" style="margin-top:12px"><button class="primary" id="go">Entrar</button><span id="err"></span></div>
+</div>
+
+<div id="panel" hidden style="display:flex;flex-direction:column;gap:16px">
+<div class="card stats">
+<div><b id="sTotal">0</b><span class="muted">votos</span></div>
+<div class="nina"><b id="sNina">0</b><span>Team niña</span></div>
+<div class="nino"><b id="sNino">0</b><span>Team niño</span></div>
+</div>
+<div class="card">
+<div class="row" style="justify-content:space-between;margin-bottom:8px">
+<strong>Lista completa</strong>
+<div class="row"><button class="ghost" id="refresh">Actualizar</button><button class="ghost" id="csv">Descargar CSV</button></div>
+</div>
+<div style="overflow-x:auto"><table><thead><tr><th>#</th><th>Nombre</th><th>Equipo</th><th>Fecha</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
+<p class="muted" id="empty">Aún no hay votos.</p>
+</div>
+</div>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var key = '', data = [];
+  try { key = sessionStorage.getItem('gr_admin') || ''; } catch (e) {}
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function fmt(ts) { try { return new Date(ts).toLocaleString('es-MX', { timeZone: 'America/Mexico_City', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } }
+  function api(method, q) {
+    return fetch('/api/admin' + (q || ''), { method: method, headers: { 'x-admin-key': key }, cache: 'no-store' })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw d; return d; }); });
+  }
+  function render() {
+    var n = data.filter(function (v) { return v.team === 'nina'; }).length;
+    $('sTotal').textContent = data.length; $('sNina').textContent = n; $('sNino').textContent = data.length - n;
+    $('empty').hidden = data.length > 0;
+    $('rows').innerHTML = data.map(function (v, i) {
+      return '<tr><td>' + (i + 1) + '</td><td>' + esc(v.name) + '</td><td class="' + v.team + '">' + (v.team === 'nina' ? 'Niña' : 'Niño') + '</td><td class="muted">' + fmt(v.updated || v.ts) + '</td><td><button class="del" data-id="' + esc(v.id) + '">Borrar</button></td></tr>';
+    }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('.del'), function (b) {
+      b.onclick = function () {
+        var v = data.find(function (x) { return x.id === b.getAttribute('data-id'); });
+        if (!v || !confirm('¿Borrar el voto de "' + v.name + '"?')) return;
+        api('DELETE', '?id=' + encodeURIComponent(v.id)).then(function (d) { data = d.votes; render(); });
+      };
+    });
+  }
+  function load() {
+    api('GET').then(function (d) {
+      data = d.votes; $('login').hidden = true; $('panel').hidden = false; $('panel').style.display = 'flex'; render();
+      try { sessionStorage.setItem('gr_admin', key); } catch (e) {}
+    }).catch(function (e) {
+      $('err').textContent = e && e.error === 'no_admin_key' ? 'Falta configurar ADMIN_KEY en Netlify.' : 'Clave incorrecta.';
+      $('panel').hidden = true; $('login').hidden = false;
+    });
+  }
+  $('go').onclick = function () { key = $('key').value; $('err').textContent = ''; load(); };
+  $('key').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('go').click(); });
+  $('refresh').onclick = load;
+  $('csv').onclick = function () {
+    var csv = 'nombre,equipo,fecha\n' + data.map(function (v) { return '"' + v.name.replace(/"/g, '""') + '",' + (v.team === 'nina' ? 'niña' : 'niño') + ',"' + fmt(v.updated || v.ts) + '"'; }).join('\n');
+    var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = 'votos-gender-reveal.csv'; a.click();
+  };
+  if (key) load();
+})();
+</script>
+</body>
+</html>
